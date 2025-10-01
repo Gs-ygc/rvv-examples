@@ -4,7 +4,7 @@
 #include <string.h>
 #include <inttypes.h>
 #include <riscv_vector.h>
-#include <bench_softmax_utils.h>
+#include "bench_softmax_utils.h"
 
 softmax_bench_result_t softmax_bench(float* dst, float* src, softmax_func_t func, double* golden, size_t n); 
 
@@ -83,8 +83,8 @@ float quick_dirty_vector_expf(float* dst, float* src, float max_x, size_t n) {
     const float iln2 = 0x1.715476p0f;
 
     const size_t vlmax = __riscv_vsetvlmax_e32m1(); 
-    const vfloat32m1_t vln2 = __riscv_vfmv_v_f_f32m1(ln2, vlmax);
-    const vfloat32m1_t viln2 = __riscv_vfmv_v_f_f32m1(iln2, vlmax);
+    __attribute__((unused)) const vfloat32m1_t vln2 = __riscv_vfmv_v_f_f32m1(ln2, vlmax);
+    __attribute__((unused)) const vfloat32m1_t viln2 = __riscv_vfmv_v_f_f32m1(iln2, vlmax);
 
     // element-wise reduction accumulator
     vfloat32m1_t vsum = __riscv_vfmv_v_f_f32m1(0.f, vlmax);
@@ -99,7 +99,7 @@ float quick_dirty_vector_expf(float* dst, float* src, float max_x, size_t n) {
   
     // we need to make sure round-to-nearest is set, because we need
     // it to be enforced for the conversion from vxiln2 to vk.
-    fesetround(FE_TONEAREST);
+    // fesetround(FE_TONEAREST);
 
     size_t avl = n;
     while (avl > 0) {
@@ -158,19 +158,24 @@ float quick_dirty_vector_expf(float* dst, float* src, float max_x, size_t n) {
 */
 void softmax_rvv_norm_fp32(float* dst, float* src, size_t n)
 {
-    int i;
+    unsigned long start, exp_start, exp_end, norm_start, norm_end, total_end;
+    start = read_perf_counter();
 
-    // computing the sum of exponentials
+    // computing the sum of exponentials (scalar expf)
+    exp_start = read_perf_counter();
+    int i;
     float sum = 0.f;
     for (i = 0; i < n; ++i) {
         dst[i] = expf(src[i]);
         sum += dst[i];
     }
+    exp_end = read_perf_counter();
 
     // computing the reciprocal of the sum of exponentials, once and for all
+    norm_start = read_perf_counter();
     float inv_sum = 1.f / sum;
 
-    // normalizing each element
+    // normalizing each element (RVV)
     size_t avl = n;
     while (avl > 0) {
         size_t vl = __riscv_vsetvl_e32m1(avl);
@@ -180,6 +185,11 @@ void softmax_rvv_norm_fp32(float* dst, float* src, size_t n)
         avl -= vl;
         dst += vl;
     }
+    norm_end = read_perf_counter();
+
+    total_end = read_perf_counter();
+    printf("PROF-N:n=%zu,exp=%lu,norm=%lu,total=%lu\n",
+           n, (exp_end - exp_start)/n, (norm_end - norm_start)/n, (total_end - start)/n);
 }
 
 
@@ -194,15 +204,19 @@ softmax_bench_result_t softmax_rvv_norm_fp32_bench(float* dst, float* src, doubl
  *  @param src source array
  *  @param n   number of element(s)
 */
-void softmax_rvv_fp32(float* dst, float* src, size_t n)
-{
-    // computing element-wise exponentials and their seum
+void softmax_rvv_fp32(float* dst, float* src, size_t n) {
+    unsigned long start, exp_start, exp_end, norm_start, norm_end, total_end;
+    
+    start = read_perf_counter();
+    
+    // 1. element-wise exponential
+    exp_start = read_perf_counter();
     float sum = quick_dirty_vector_expf(dst, src, 0.f, n);
-
-    // computing the reciprocal of the sum of exponentials, once and for all
+    exp_end = read_perf_counter();
+    
+    // 2. normalization
+    norm_start = read_perf_counter();
     float inv_sum = 1.f / sum;
-
-    // normalizing each element
     size_t avl = n;
     while (avl > 0) {
         size_t vl = __riscv_vsetvl_e32m1(avl);
@@ -212,6 +226,13 @@ void softmax_rvv_fp32(float* dst, float* src, size_t n)
         avl -= vl;
         dst += vl;
     }
+    norm_end = read_perf_counter();
+    
+    total_end = read_perf_counter();
+    
+    // output performance data
+    printf("PROF-A:n=%zu,exp=%lu,norm=%lu,total=%lu\n", 
+           n, (exp_end - exp_start)/n, (norm_end - norm_start)/n, (total_end - start)/n);
 }
 
 
@@ -228,6 +249,9 @@ softmax_bench_result_t softmax_rvv_fp32_bench(float* dst, float* src, double* go
 */
 void softmax_stable_rvv_fp32(float* dst, float* src, size_t n)
 {
+    unsigned long start, max_start, max_end, exp_start, exp_end, norm_start, norm_end, total_end;
+    start = read_perf_counter();
+
     // initializing temporary maximum vector
     // vlmax initialization is required in case the first vsetvl does
     // not return VLMAX while avl > vl: in this case we need to
@@ -236,7 +260,7 @@ void softmax_stable_rvv_fp32(float* dst, float* src, size_t n)
     vfloat32m1_t vmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
 
     size_t avl = n;
-
+    max_start = read_perf_counter();
     while (avl > 0) {
         size_t vl = __riscv_vsetvl_e32m1(avl);
         vfloat32m1_t vx = __riscv_vle32_v_f32m1(src, vl);
@@ -245,6 +269,7 @@ void softmax_stable_rvv_fp32(float* dst, float* src, size_t n)
         src += vl;
     }
     src -= n; // reseting source pointer
+    max_end = read_perf_counter();
 
     // final maximum reduction
     vfloat32m1_t vredmax = __riscv_vfmv_v_f_f32m1(-INFINITY, vlmax);
@@ -257,9 +282,12 @@ void softmax_stable_rvv_fp32(float* dst, float* src, size_t n)
 
     // Computing element-wise exponentials and their sum.
     // max_x is subtracted from each element before computing the element-wise exponential.
+    exp_start = read_perf_counter();
     float sum = quick_dirty_vector_expf(dst, src, max_x, n);
+    exp_end = read_perf_counter();
 
     // computing the reciprocal of the sum of exponentials, once and for all
+    norm_start = read_perf_counter();
     float inv_sum = 1.f / sum;
 
     // normalizing each element
@@ -272,6 +300,11 @@ void softmax_stable_rvv_fp32(float* dst, float* src, size_t n)
         avl -= vl;
         dst += vl;
     }
+    norm_end = read_perf_counter();
+
+    total_end = read_perf_counter();
+    printf("PROF-S:n=%zu,exp=%lu,norm=%lu,total=%lu, max=%lu\n",
+           n, (exp_end - exp_start)/n, (norm_end - norm_start)/n, (total_end - start)/n, max_end - max_start);
 }
 
 

@@ -21,12 +21,15 @@ static unsigned long read_perf_counter(void)
 #elif defined(COUNT_CYCLE)
 #define PERF_METRIC "cycle"
   asm volatile ("rdcycle %0" : "=r" (counter_value));
-#else
+#elif defined(COUNT_INST)
   // instret is also the default
 #define PERF_METRIC "instruction"
   asm volatile ("rdinstret %0" : "=r" (counter_value));
+#else
+#define PERF_METRIC "time"
+  asm volatile ("rdtime %0" : "=r" (counter_value));
 #endif
-  return counter_value;
+  return counter_value*66;
 }
 
 typedef struct {

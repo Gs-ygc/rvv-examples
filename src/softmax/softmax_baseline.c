@@ -1,6 +1,8 @@
 #include <math.h>
 #include <stddef.h>
-#include <bench_softmax_utils.h>
+//#include <klib.h>
+#include <stdint.h>
+#include "bench_softmax_utils.h"
 
 
 /** Baseline implementation of softmax for binary32
@@ -11,20 +13,30 @@
 */
 void softmax_baseline_fp32(float* dst, float* src, size_t n)
 {
-    int i;
+    unsigned long start, exp_start, exp_end, norm_start, norm_end, total_end;
+    start = read_perf_counter();
 
     // computing the sum of exponentials
+    exp_start = read_perf_counter();
+    int i;
     float sum = 0.f;
     for (i = 0; i < n; ++i) {
         dst[i] = expf(src[i]);
         sum += dst[i]; 
     }
+    exp_end = read_perf_counter();
 
     // computing the reciprocal of the sum of exponentials, once and for all
+    norm_start = read_perf_counter();
     float inv_sum = 1.f / sum;
 
     // normalizing each element
     for (i = 0; i < n; ++i) dst[i] = dst[i] * inv_sum;
+    norm_end = read_perf_counter();
+
+    total_end = read_perf_counter();
+    printf("PROF-B:n=%zu,exp=%lu,norm=%lu,total=%lu\n",
+           n, (exp_end - exp_start)/n, (norm_end - norm_start)/n, (total_end - start)/n);
 }
 
 

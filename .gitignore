@@ -1,0 +1,25 @@
+# 编译生成的可执行文件
+bench_exp
+bench_softmax
+
+# 性能分析数据
+perf.data
+perf.data.old
+
+# 编译目标文件
+*.o
+
+# 日志文件
+*.log
+
+# 其他常见的忽略项
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+.DS_Store
+*.swp
+*.swo
+*~
