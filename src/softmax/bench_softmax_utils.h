@@ -1,7 +1,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <math.h>
-
+#include "time_convert.h"
 /** generic type for a binary32/float softmax implementation */
 typedef void(softmax_func_t)(float* dst, float* src, size_t n);
 
@@ -28,8 +28,9 @@ static unsigned long read_perf_counter(void)
 #else
 #define PERF_METRIC "time"
   asm volatile ("rdtime %0" : "=r" (counter_value));
+  counter_value*= g_time_to_cycle_ratio;
 #endif
-  return counter_value*66;
+  return counter_value;
 }
 
 typedef struct {

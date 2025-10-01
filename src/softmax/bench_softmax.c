@@ -5,7 +5,8 @@
 #include <stdio.h>
 #include <assert.h>
 #include <bench_softmax_utils.h>
-
+#include <unistd.h>
+#include <fcntl.h>
 
 /** Declaring various softmax implementation benchmarks **/
 softmax_bench_result_t softmax_baseline_fp32_bench(float* dst, float* src, double* golden, size_t n);
@@ -35,6 +36,34 @@ extern void softmax_golden_fp32_fp64(double* dst, float* src, size_t n);
 #endif
 
 
+/**
+ * @brief 设置 kernel.perf_user_access 为 2
+ * @return 0 成功，-1 失败
+ */
+int set_perf_user_access(void) {
+    const char *path = "/proc/sys/kernel/perf_user_access";
+    const char *value = "2";
+    int fd;
+
+    fd = open(path, O_WRONLY);
+    if (fd == -1) {
+        perror("Failed to open /proc/sys/kernel/perf_user_access");
+        return -1;
+    }
+
+    if (write(fd, value, strlen(value)) == -1) {
+        perror("Failed to write to /proc/sys/kernel/perf_user_access");
+        close(fd);
+        return -1;
+    }
+
+    close(fd);
+    printf("Successfully set kernel.perf_user_access = %s\n", value);
+    return 0;
+}
+
+#include "time_convert.h"
+
 int main(void) {
     int i;
     softmax_bench_t benchmarks[] = {
@@ -44,7 +73,35 @@ int main(void) {
         (softmax_bench_t){.bench = softmax_rvv_fp32_bench,                     .label="rvv-based n-element softmax"},
         (softmax_bench_t){.bench = softmax_stable_rvv_fp32_bench,              .label="rvv-based n-element stable softmax"},
     };
+#if defined(COUNT_CYCLE)
+    if (set_perf_user_access() != 0) {
+        return EXIT_FAILURE;
+    }
+    do{
+    	uint64_t cycle;
+    	asm volatile ("rdcycle %0" : "=r"(cycle));
+	printf("Cycle = %ld", cycle);
+    }while(0);
+#endif
+     if (init_time_to_cycles() != 0) {
+        fprintf(stderr, "Time conversion initialization failed\n");
+        return EXIT_FAILURE;
+    }
+    do{
+	uint64_t time_val = get_rdtime();
+    	uint64_t cycles = time_to_cycles_a(time_val);
 
+    	printf("Current time: %lu\n", time_val);
+    	printf("Equivalent cycles: %lu\n", cycles);
+
+    	// 也可以直接使用全局比例
+    	printf("Global ratio: %.6f\n", g_time_to_cycle_ratio);
+
+    	// 测试转换
+    	uint64_t test_time = 1000000;
+    	uint64_t test_cycles = time_to_cycles_a(test_time);
+    	printf("%lu time units = %lu cycles\n", test_time, test_cycles);
+    }while(0);
     size_t testSizes[] = {4, 16, 17, 32, 33, 128, 129, 511, 512, 1024, 2048, 8192, 40960};
     for (size_t testId = 0; testId < sizeof(testSizes) / sizeof(size_t); testId++)
     {
